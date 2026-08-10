@@ -1,0 +1,12 @@
+{
+  "schema": "glaciereq.repo-capabilities.v1",
+  "repository": "GlacierEQ/replicate-model-version-pin-gate",
+  "capabilities": [
+    {
+      "id": "model-version-pin-gate",
+      "name": "Model Version Pin Gate",
+      "status": "SCAFFOLD",
+      "module": "src/model_version_pin_gate.py"
+    }
+  ]
+}

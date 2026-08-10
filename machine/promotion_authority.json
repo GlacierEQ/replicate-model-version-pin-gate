@@ -1,0 +1,11 @@
+{
+  "schema": "glaciereq.promotion-authority-grant.v1",
+  "repository": "GlacierEQ/replicate-model-version-pin-gate",
+  "source_sha": "1802c7f2cfeabbe96e12d02efdd0e5770eb40a856308448e39cdcb13d1d9b19b",
+  "proof_receipt_digest": "7f2be08c7bca72a62e8f1b169707ef598a28863d493eafbad4a714b07b426698",
+  "not_after": 1788948687.895305,
+  "mac": "1474ce08bb38b52068967fbb37566acab19d878e619653b6a1945c2e51fee57e",
+  "issuer": "local_operator_promotion_authority",
+  "verified": true,
+  "secret_ref": "src/promotion_authority.py::LOCAL_OPERATOR_SECRET"
+}

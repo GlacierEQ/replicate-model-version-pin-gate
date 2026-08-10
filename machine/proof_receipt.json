@@ -1,0 +1,31 @@
+{
+  "schema": "glaciereq.proof-receipt.v1",
+  "repository": "GlacierEQ/replicate-model-version-pin-gate",
+  "source_sha": "1802c7f2cfeabbe96e12d02efdd0e5770eb40a856308448e39cdcb13d1d9b19b",
+  "proof_id": "elite-replicate-model-version-pin-gate-1786356687",
+  "environment": {
+    "python": "/Users/kcbflux/.local/bin/python3.11",
+    "PYTHONPATH": "/Users/kcbflux/GlacierEQ_Swarm/job-app/repos/replicate-model-version-pin-gate:/Users/kcbflux/GlacierEQ_Swarm/job-app/repos/replicate-model-version-pin-gate/src",
+    "entry": "unittest"
+  },
+  "tests": [
+    "/Users/kcbflux/.local/bin/python3.11 -m unittest discover -s tests -v (x2)"
+  ],
+  "adversarial_tests": [
+    "tests/test_adversarial.py"
+  ],
+  "runtime": {
+    "operate": "scripts/operate.py (x2)",
+    "dual_run_ok": true,
+    "proof_dual_run_ok": true
+  },
+  "result": "PASS",
+  "limitations": [
+    "not production deployed",
+    "reference implementation only"
+  ],
+  "timestamp": "2026-08-10T10:11Z",
+  "artifact_hashes": {
+    "operability_receipt": "40a0456f88bc6609490849557d7bb86570e6a7467b799bb979acb2369437c33d"
+  }
+}

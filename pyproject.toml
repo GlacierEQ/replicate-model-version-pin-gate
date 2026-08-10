@@ -1,0 +1,10 @@
+[project]
+name = "replicate-model-version-pin-gate"
+version = "0.0.1"
+description = "Scaffold: Model Version Pin Gate (independent Replicate lens)"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
