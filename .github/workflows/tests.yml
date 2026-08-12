@@ -14,7 +14,10 @@ jobs:
       - run: python -m pip install --no-build-isolation .
       - run: python -m pytest -q
       - run: python scripts/operate.py
-      - name: installed CLI smoke
+      - name: installed CLI lockfile smoke
         run: |
-          printf '%s' '{"subject_id":"ci","payload":{"model":"demo/model","version":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","environment":"PRODUCTION","parameters":{}},"budget":4}' | model-version-pin > /tmp/pin.json
+          printf '%s' '{"subject_id":"ci","payload":{"model":"demo/model","version":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","environment":"PRODUCTION","parameters":{"steps":20},"input_digest":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"budget":4}' > /tmp/request.json
+          model-version-pin --input /tmp/request.json --lockfile /tmp/model-version.lock.json > /tmp/pin.json
           python -c 'import json; d=json.load(open("/tmp/pin.json")); assert d["decision"] == "ALLOW"; assert d["result"]["immutable_pin"] is True'
+          model-version-pin --verify-lockfile /tmp/model-version.lock.json > /tmp/verify.json
+          python -c 'import json; d=json.load(open("/tmp/verify.json")); assert d["valid"] is True; assert d["lock"]["resolved_version"] == "a"*64'
