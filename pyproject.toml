@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "replicate-model-version-pin-gate"
-version = "1.0.0"
-description = "Immutable model-version pinning and reproducibility receipts for hosted inference"
+version = "1.1.0"
+description = "Immutable model-version pinning and content-addressed lockfiles for reproducible inference"
 requires-python = ">=3.11"
 dependencies = []
 
