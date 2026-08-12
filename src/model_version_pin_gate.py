@@ -1,4 +1,4 @@
-"""Deterministic model-version pinning for reproducible hosted inference."""
+"""Deterministic model-version pinning and lockfiles for reproducible inference."""
 from __future__ import annotations
 
 import argparse
@@ -15,7 +15,14 @@ from typing import Any, Callable, Mapping, Sequence
 
 
 def _digest(obj: object) -> str:
-    payload = json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False, default=str)
+    payload = json.dumps(
+        obj,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+        default=str,
+    )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -57,20 +64,47 @@ class ModelVersionPinGateReceipt:
         }
 
 
-class ModelVersionPinGate:
-    """Resolve model versions and forbid floating versions for production calls.
+@dataclass(frozen=True)
+class ModelVersionLock:
+    """Portable, content-addressed record of the exact model invocation identity."""
 
-    Immutable version identifiers are 64-character hexadecimal digests. Aliases
-    such as ``latest`` or ``stable`` may be resolved only outside production and
-    only when the constructor is given an explicit alias registry. The receipt
-    always exposes the resolved immutable version used to form the invocation key.
-    """
+    schema_version: int
+    model: str
+    resolved_version: str
+    environment: str
+    invocation_key: str
+    parameter_fingerprint: str
+    reproducibility_fingerprint: str
+    input_digest: str | None
+    receipt_digest: str
+    lock_digest: str
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "model": self.model,
+            "resolved_version": self.resolved_version,
+            "environment": self.environment,
+            "invocation_key": self.invocation_key,
+            "parameter_fingerprint": self.parameter_fingerprint,
+            "reproducibility_fingerprint": self.reproducibility_fingerprint,
+            "input_digest": self.input_digest,
+            "receipt_digest": self.receipt_digest,
+            "lock_digest": self.lock_digest,
+        }
+
+
+class ModelVersionPinGate:
+    """Resolve model versions and forbid floating versions for production calls."""
 
     IMMUTABLE_VERSION_RE = re.compile(r"^[0-9a-fA-F]{64}$")
-    VALID_PAYLOAD_KEYS = frozenset({"model", "version", "environment", "parameters", "input_digest"})
+    VALID_PAYLOAD_KEYS = frozenset(
+        {"model", "version", "environment", "parameters", "input_digest"}
+    )
     MAX_PARAMETERS = 128
     BASE_WORK_UNITS = 1.0
     PARAMETER_WORK_UNITS = 0.05
+    LOCK_SCHEMA_VERSION = 1
 
     def __init__(
         self,
@@ -80,7 +114,9 @@ class ModelVersionPinGate:
         clock: Callable[[], float] | None = None,
     ) -> None:
         self._aliases = {
-            str(model): {str(alias): str(version).lower() for alias, version in values.items()}
+            str(model): {
+                str(alias): str(version).lower() for alias, version in values.items()
+            }
             for model, values in (aliases or {}).items()
         }
         self._known_versions = {
@@ -108,7 +144,12 @@ class ModelVersionPinGate:
     def is_immutable_version(cls, version: str) -> bool:
         return bool(cls.IMMUTABLE_VERSION_RE.fullmatch(version))
 
-    def _refuse(self, req: ModelVersionPinGateRequest, reasons: list[str], result: dict[str, Any] | None = None) -> ModelVersionPinGateReceipt:
+    def _refuse(
+        self,
+        req: ModelVersionPinGateRequest,
+        reasons: list[str],
+        result: dict[str, Any] | None = None,
+    ) -> ModelVersionPinGateReceipt:
         unique = tuple(sorted(set(reasons)))
         result = result or {}
         body = {
@@ -129,18 +170,29 @@ class ModelVersionPinGate:
             result=result,
         )
 
-    def evaluate(self, req: ModelVersionPinGateRequest) -> ModelVersionPinGateReceipt:
+    def evaluate(
+        self, req: ModelVersionPinGateRequest
+    ) -> ModelVersionPinGateReceipt:
         if not isinstance(req, ModelVersionPinGateRequest):
             raise TypeError("req must be ModelVersionPinGateRequest")
+
         reasons: list[str] = []
         if not req.subject_id or not req.subject_id.strip():
             reasons.append("subject_id_missing")
-        if not isinstance(req.budget, (int, float)) or isinstance(req.budget, bool) or not math.isfinite(float(req.budget)):
+        if (
+            not isinstance(req.budget, (int, float))
+            or isinstance(req.budget, bool)
+            or not math.isfinite(float(req.budget))
+        ):
             reasons.append("budget_invalid")
         elif req.budget <= 0:
             reasons.append("budget_non_positive")
         if req.not_after is not None:
-            if not isinstance(req.not_after, (int, float)) or isinstance(req.not_after, bool) or not math.isfinite(float(req.not_after)):
+            if (
+                not isinstance(req.not_after, (int, float))
+                or isinstance(req.not_after, bool)
+                or not math.isfinite(float(req.not_after))
+            ):
                 reasons.append("request_expiry_invalid")
             elif self._clock() > float(req.not_after):
                 reasons.append("request_expired")
@@ -162,9 +214,12 @@ class ModelVersionPinGate:
             return self._refuse(req, ["parameters_invalid"])
         if len(parameters) > self.MAX_PARAMETERS:
             return self._refuse(req, ["parameters_over_limit"])
+
         input_digest = req.payload.get("input_digest")
         if input_digest is not None:
-            if not isinstance(input_digest, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", input_digest):
+            if not isinstance(input_digest, str) or not re.fullmatch(
+                r"[0-9a-fA-F]{64}", input_digest
+            ):
                 return self._refuse(req, ["input_digest_invalid"])
             input_digest = input_digest.lower()
 
@@ -173,7 +228,11 @@ class ModelVersionPinGate:
             return self._refuse(
                 req,
                 ["production_requires_immutable_version_pin"],
-                {"model": model, "requested_version": requested_version, "environment": environment.value},
+                {
+                    "model": model,
+                    "requested_version": requested_version,
+                    "environment": environment.value,
+                },
             )
 
         if immutable_input:
@@ -185,7 +244,11 @@ class ModelVersionPinGate:
                 return self._refuse(
                     req,
                     ["floating_version_unresolved"],
-                    {"model": model, "requested_version": requested_version, "environment": environment.value},
+                    {
+                        "model": model,
+                        "requested_version": requested_version,
+                        "environment": environment.value,
+                    },
                 )
             if not self.is_immutable_version(resolved_version):
                 return self._refuse(req, ["alias_registry_target_not_immutable"])
@@ -202,15 +265,30 @@ class ModelVersionPinGate:
 
         work_units = self.BASE_WORK_UNITS + len(parameters) * self.PARAMETER_WORK_UNITS
         if work_units > float(req.budget):
-            return self._refuse(req, ["work_budget_exceeded"], {"work_units": work_units, "budget_units": float(req.budget)})
+            return self._refuse(
+                req,
+                ["work_budget_exceeded"],
+                {"work_units": work_units, "budget_units": float(req.budget)},
+            )
 
-        parameter_fingerprint = _digest(dict(sorted(parameters.items())))
-        invocation_key = _digest({
-            "model": model,
-            "version": resolved_version,
-            "parameters": dict(sorted(parameters.items())),
-            "input_digest": input_digest,
-        })
+        canonical_parameters = dict(sorted(parameters.items()))
+        parameter_fingerprint = _digest(canonical_parameters)
+        invocation_key = _digest(
+            {
+                "model": model,
+                "version": resolved_version,
+                "parameters": canonical_parameters,
+                "input_digest": input_digest,
+            }
+        )
+        reproducibility_fingerprint = _digest(
+            {
+                "model": model,
+                "resolved_version": resolved_version,
+                "parameter_fingerprint": parameter_fingerprint,
+                "input_digest": input_digest,
+            }
+        )
         result = {
             "model": model,
             "environment": environment.value,
@@ -219,6 +297,7 @@ class ModelVersionPinGate:
             "resolution": resolution,
             "immutable_pin": True,
             "invocation_key": invocation_key,
+            "input_digest": input_digest,
         }
         metrics = {
             "bounded": True,
@@ -226,12 +305,7 @@ class ModelVersionPinGate:
             "budget_units": float(req.budget),
             "work_units": work_units,
             "parameter_fingerprint": parameter_fingerprint,
-            "reproducibility_fingerprint": _digest({
-                "model": model,
-                "resolved_version": resolved_version,
-                "parameter_fingerprint": parameter_fingerprint,
-                "input_digest": input_digest,
-            }),
+            "reproducibility_fingerprint": reproducibility_fingerprint,
         }
         body = {
             "subject_id": req.subject_id,
@@ -256,17 +330,105 @@ class ModelVersionPinGate:
             and receipt.metrics.get("bounded") is True
             and len(receipt.digest) == 64
             and receipt.decision in {Decision.ALLOW, Decision.REFUSE}
-            and (receipt.decision is Decision.REFUSE or receipt.result.get("immutable_pin") is True)
+            and (
+                receipt.decision is Decision.REFUSE
+                or receipt.result.get("immutable_pin") is True
+            )
         )
+
+    @classmethod
+    def build_lock(cls, receipt: ModelVersionPinGateReceipt) -> ModelVersionLock:
+        """Create a deterministic lock from a successful evaluation receipt."""
+        if receipt.decision is not Decision.ALLOW or not cls.verify_receipt(receipt):
+            raise ValueError("lock_requires_verified_allow_receipt")
+        result = receipt.result
+        metrics = receipt.metrics
+        body = {
+            "schema_version": cls.LOCK_SCHEMA_VERSION,
+            "model": result["model"],
+            "resolved_version": result["resolved_version"],
+            "environment": result["environment"],
+            "invocation_key": result["invocation_key"],
+            "parameter_fingerprint": metrics["parameter_fingerprint"],
+            "reproducibility_fingerprint": metrics["reproducibility_fingerprint"],
+            "input_digest": result.get("input_digest"),
+            "receipt_digest": receipt.digest,
+        }
+        return ModelVersionLock(**body, lock_digest=_digest(body))
+
+    @classmethod
+    def verify_lock(cls, lock: Mapping[str, Any] | ModelVersionLock) -> bool:
+        data = lock.as_dict() if isinstance(lock, ModelVersionLock) else dict(lock)
+        digest = data.pop("lock_digest", None)
+        if not isinstance(digest, str) or len(digest) != 64:
+            return False
+        if data.get("schema_version") != cls.LOCK_SCHEMA_VERSION:
+            return False
+        version = data.get("resolved_version")
+        if not isinstance(version, str) or not cls.is_immutable_version(version):
+            return False
+        for key in (
+            "model",
+            "environment",
+            "invocation_key",
+            "parameter_fingerprint",
+            "reproducibility_fingerprint",
+            "receipt_digest",
+        ):
+            if not isinstance(data.get(key), str) or not data[key]:
+                return False
+        return _digest(data) == digest
+
+    @classmethod
+    def write_lockfile(
+        cls, receipt: ModelVersionPinGateReceipt, path: str | Path
+    ) -> ModelVersionLock:
+        lock = cls.build_lock(receipt)
+        destination = Path(path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(
+            json.dumps(lock.as_dict(), indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        return lock
+
+    @classmethod
+    def read_lockfile(cls, path: str | Path) -> ModelVersionLock:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        if not isinstance(data, Mapping) or not cls.verify_lock(data):
+            raise ValueError("invalid_model_version_lock")
+        return ModelVersionLock(**dict(data))
 
 
 Mechanism = ModelVersionPinGate
 
 
 def cli(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Validate and resolve a model-version pin request from JSON.")
-    parser.add_argument("--input", "-i", help="JSON file; defaults to stdin")
+    parser = argparse.ArgumentParser(
+        description="Validate model-version pins and create reproducible lockfiles."
+    )
+    parser.add_argument("--input", "-i", help="request JSON file; defaults to stdin")
+    parser.add_argument("--lockfile", help="write a lockfile for an allowed request")
+    parser.add_argument(
+        "--verify-lockfile",
+        help="verify an existing lockfile instead of evaluating a request",
+    )
     args = parser.parse_args(argv)
+
+    if args.verify_lockfile:
+        try:
+            lock = ModelVersionPinGate.read_lockfile(args.verify_lockfile)
+        except Exception as exc:
+            print(
+                json.dumps(
+                    {"valid": False, "reason": f"{type(exc).__name__}:{exc}"},
+                    sort_keys=True,
+                )
+            )
+            return 2
+        print(json.dumps({"valid": True, "lock": lock.as_dict()}, indent=2, sort_keys=True))
+        return 0
+
     try:
         raw = Path(args.input).read_text(encoding="utf-8") if args.input else sys.stdin.read()
         data = json.loads(raw)
@@ -284,8 +446,16 @@ def cli(argv: Sequence[str] | None = None) -> int:
             not_after=data.get("not_after"),
         )
         receipt = gate.evaluate(req)
+        if args.lockfile and receipt.decision is Decision.ALLOW:
+            gate.write_lockfile(receipt, args.lockfile)
     except Exception as exc:
-        print(json.dumps({"decision": "REFUSE", "reasons": [f"cli_input_error:{type(exc).__name__}:{exc}"]}, sort_keys=True))
+        print(
+            json.dumps(
+                {"decision": "REFUSE", "reasons": [f"cli_input_error:{type(exc).__name__}:{exc}"]},
+                sort_keys=True,
+            )
+        )
         return 2
+
     print(json.dumps(receipt.as_dict(), indent=2, sort_keys=True))
     return 0 if receipt.decision is Decision.ALLOW else 2
