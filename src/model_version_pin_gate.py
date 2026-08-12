@@ -15,15 +15,35 @@ from typing import Any, Callable, Mapping, Sequence
 
 
 def _digest(obj: object) -> str:
+    """Hash canonical JSON only. Unsupported Python objects are never coerced."""
     payload = json.dumps(
         obj,
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=False,
         allow_nan=False,
-        default=str,
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _canonical_json(value: Any, *, path: str = "value") -> Any:
+    """Validate and copy the strict JSON value domain used for fingerprints."""
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError(f"{path}_non_finite")
+        return value
+    if isinstance(value, list):
+        return [_canonical_json(item, path=f"{path}[{index}]") for index, item in enumerate(value)]
+    if isinstance(value, Mapping):
+        out: dict[str, Any] = {}
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise ValueError(f"{path}_key_not_string")
+            out[key] = _canonical_json(item, path=f"{path}.{key}")
+        return out
+    raise ValueError(f"{path}_not_canonical_json")
 
 
 class Decision(str, Enum):
@@ -66,7 +86,7 @@ class ModelVersionPinGateReceipt:
 
 @dataclass(frozen=True)
 class ModelVersionLock:
-    """Portable, content-addressed record of the exact model invocation identity."""
+    """Portable content-addressed record of an exact model invocation identity."""
 
     schema_version: int
     model: str
@@ -144,6 +164,22 @@ class ModelVersionPinGate:
     def is_immutable_version(cls, version: str) -> bool:
         return bool(cls.IMMUTABLE_VERSION_RE.fullmatch(version))
 
+    @staticmethod
+    def _receipt_digest(
+        decision: Decision,
+        reasons: Sequence[str],
+        metrics: Mapping[str, Any],
+        result: Mapping[str, Any],
+    ) -> str:
+        return _digest(
+            {
+                "decision": decision.value,
+                "reasons": list(reasons),
+                "metrics": dict(metrics),
+                "result": dict(result),
+            }
+        )
+
     def _refuse(
         self,
         req: ModelVersionPinGateRequest,
@@ -151,22 +187,14 @@ class ModelVersionPinGate:
         result: dict[str, Any] | None = None,
     ) -> ModelVersionPinGateReceipt:
         unique = tuple(sorted(set(reasons)))
-        result = result or {}
-        body = {
-            "subject_id": req.subject_id,
-            "payload": req.payload,
-            "budget": req.budget,
-            "grant_id": req.grant_id,
-            "not_after": req.not_after,
-            "decision": Decision.REFUSE.value,
-            "reasons": unique,
-            "result": result,
-        }
+        result = _canonical_json(result or {}, path="result")
+        metrics = {"bounded": True, "reason_count": len(unique)}
+        digest = self._receipt_digest(Decision.REFUSE, unique, metrics, result)
         return ModelVersionPinGateReceipt(
             decision=Decision.REFUSE,
             reasons=unique,
-            digest=_digest(body),
-            metrics={"bounded": True, "reason_count": len(unique)},
+            digest=digest,
+            metrics=metrics,
             result=result,
         )
 
@@ -214,6 +242,10 @@ class ModelVersionPinGate:
             return self._refuse(req, ["parameters_invalid"])
         if len(parameters) > self.MAX_PARAMETERS:
             return self._refuse(req, ["parameters_over_limit"])
+        try:
+            canonical_parameters = _canonical_json(parameters, path="parameters")
+        except ValueError as exc:
+            return self._refuse(req, [str(exc)])
 
         input_digest = req.payload.get("input_digest")
         if input_digest is not None:
@@ -271,7 +303,6 @@ class ModelVersionPinGate:
                 {"work_units": work_units, "budget_units": float(req.budget)},
             )
 
-        canonical_parameters = dict(sorted(parameters.items()))
         parameter_fingerprint = _digest(canonical_parameters)
         invocation_key = _digest(
             {
@@ -307,38 +338,37 @@ class ModelVersionPinGate:
             "parameter_fingerprint": parameter_fingerprint,
             "reproducibility_fingerprint": reproducibility_fingerprint,
         }
-        body = {
-            "subject_id": req.subject_id,
-            "grant_id": req.grant_id,
-            "not_after": req.not_after,
-            "decision": Decision.ALLOW.value,
-            "result": result,
-            "metrics": metrics,
-        }
+        reasons = ("immutable_model_version_bound",)
+        digest = self._receipt_digest(Decision.ALLOW, reasons, metrics, result)
         return ModelVersionPinGateReceipt(
             decision=Decision.ALLOW,
-            reasons=("immutable_model_version_bound",),
-            digest=_digest(body),
+            reasons=reasons,
+            digest=digest,
             metrics=metrics,
             result=result,
         )
 
-    @staticmethod
-    def verify_receipt(receipt: ModelVersionPinGateReceipt) -> bool:
-        return (
-            isinstance(receipt, ModelVersionPinGateReceipt)
-            and receipt.metrics.get("bounded") is True
-            and len(receipt.digest) == 64
-            and receipt.decision in {Decision.ALLOW, Decision.REFUSE}
-            and (
-                receipt.decision is Decision.REFUSE
-                or receipt.result.get("immutable_pin") is True
+    @classmethod
+    def verify_receipt(cls, receipt: ModelVersionPinGateReceipt) -> bool:
+        if not isinstance(receipt, ModelVersionPinGateReceipt):
+            return False
+        if receipt.decision not in {Decision.ALLOW, Decision.REFUSE}:
+            return False
+        if receipt.metrics.get("bounded") is not True:
+            return False
+        if receipt.decision is Decision.ALLOW and receipt.result.get("immutable_pin") is not True:
+            return False
+        try:
+            expected = cls._receipt_digest(
+                receipt.decision, receipt.reasons, receipt.metrics, receipt.result
             )
-        )
+        except (TypeError, ValueError):
+            return False
+        return expected == receipt.digest
 
     @classmethod
     def build_lock(cls, receipt: ModelVersionPinGateReceipt) -> ModelVersionLock:
-        """Create a deterministic lock from a successful evaluation receipt."""
+        """Create a deterministic lock from a self-consistent successful receipt."""
         if receipt.decision is not Decision.ALLOW or not cls.verify_receipt(receipt):
             raise ValueError("lock_requires_verified_allow_receipt")
         result = receipt.result
@@ -357,10 +387,22 @@ class ModelVersionPinGate:
         return ModelVersionLock(**body, lock_digest=_digest(body))
 
     @classmethod
-    def verify_lock(cls, lock: Mapping[str, Any] | ModelVersionLock) -> bool:
+    def verify_lock(
+        cls,
+        lock: Mapping[str, Any] | ModelVersionLock,
+        *,
+        expected_digest: str | None = None,
+    ) -> bool:
+        """Verify lock checksum and, when supplied, an independently stored digest.
+
+        The embedded ``lock_digest`` detects accidental corruption. Supplying
+        ``expected_digest`` additionally binds the lock to a value obtained from
+        a trusted external channel or immutable manifest, so a rewritten lock
+        with a recomputed embedded checksum is rejected.
+        """
         data = lock.as_dict() if isinstance(lock, ModelVersionLock) else dict(lock)
-        digest = data.pop("lock_digest", None)
-        if not isinstance(digest, str) or len(digest) != 64:
+        embedded = data.pop("lock_digest", None)
+        if not isinstance(embedded, str) or len(embedded) != 64:
             return False
         if data.get("schema_version") != cls.LOCK_SCHEMA_VERSION:
             return False
@@ -377,7 +419,18 @@ class ModelVersionPinGate:
         ):
             if not isinstance(data.get(key), str) or not data[key]:
                 return False
-        return _digest(data) == digest
+        try:
+            computed = _digest(data)
+        except (TypeError, ValueError):
+            return False
+        if computed != embedded:
+            return False
+        if expected_digest is not None:
+            if not isinstance(expected_digest, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", expected_digest):
+                return False
+            if computed != expected_digest.lower():
+                return False
+        return True
 
     @classmethod
     def write_lockfile(
@@ -393,9 +446,16 @@ class ModelVersionPinGate:
         return lock
 
     @classmethod
-    def read_lockfile(cls, path: str | Path) -> ModelVersionLock:
+    def read_lockfile(
+        cls,
+        path: str | Path,
+        *,
+        expected_digest: str | None = None,
+    ) -> ModelVersionLock:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
-        if not isinstance(data, Mapping) or not cls.verify_lock(data):
+        if not isinstance(data, Mapping) or not cls.verify_lock(
+            data, expected_digest=expected_digest
+        ):
             raise ValueError("invalid_model_version_lock")
         return ModelVersionLock(**dict(data))
 
@@ -413,11 +473,17 @@ def cli(argv: Sequence[str] | None = None) -> int:
         "--verify-lockfile",
         help="verify an existing lockfile instead of evaluating a request",
     )
+    parser.add_argument(
+        "--expected-digest",
+        help="trusted external SHA-256 digest to bind lockfile verification",
+    )
     args = parser.parse_args(argv)
 
     if args.verify_lockfile:
         try:
-            lock = ModelVersionPinGate.read_lockfile(args.verify_lockfile)
+            lock = ModelVersionPinGate.read_lockfile(
+                args.verify_lockfile, expected_digest=args.expected_digest
+            )
         except Exception as exc:
             print(
                 json.dumps(
@@ -426,7 +492,17 @@ def cli(argv: Sequence[str] | None = None) -> int:
                 )
             )
             return 2
-        print(json.dumps({"valid": True, "lock": lock.as_dict()}, indent=2, sort_keys=True))
+        print(
+            json.dumps(
+                {
+                    "valid": True,
+                    "integrity": "external_digest_bound" if args.expected_digest else "embedded_checksum",
+                    "lock": lock.as_dict(),
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
         return 0
 
     try:
@@ -446,8 +522,9 @@ def cli(argv: Sequence[str] | None = None) -> int:
             not_after=data.get("not_after"),
         )
         receipt = gate.evaluate(req)
+        lock = None
         if args.lockfile and receipt.decision is Decision.ALLOW:
-            gate.write_lockfile(receipt, args.lockfile)
+            lock = gate.write_lockfile(receipt, args.lockfile)
     except Exception as exc:
         print(
             json.dumps(
@@ -457,5 +534,8 @@ def cli(argv: Sequence[str] | None = None) -> int:
         )
         return 2
 
-    print(json.dumps(receipt.as_dict(), indent=2, sort_keys=True))
+    output = receipt.as_dict()
+    if lock is not None:
+        output["lock_digest"] = lock.lock_digest
+    print(json.dumps(output, indent=2, sort_keys=True))
     return 0 if receipt.decision is Decision.ALLOW else 2
