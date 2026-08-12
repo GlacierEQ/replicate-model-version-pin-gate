@@ -29,20 +29,22 @@ def main() -> int:
         not_after=2000,
     )
     receipt = gate.evaluate(req)
-    if receipt.decision is not Decision.ALLOW:
+    if receipt.decision is not Decision.ALLOW or not gate.verify_receipt(receipt):
         print(json.dumps(receipt.as_dict(), indent=2, sort_keys=True))
         return 2
 
     with tempfile.TemporaryDirectory(prefix="model-pin-") as tmp:
         lock_path = Path(tmp) / "model-version.lock.json"
         lock = gate.write_lockfile(receipt, lock_path)
-        loaded = gate.read_lockfile(lock_path)
-        if loaded != lock or not gate.verify_lock(loaded):
+        trusted_digest = lock.lock_digest
+        loaded = gate.read_lockfile(lock_path, expected_digest=trusted_digest)
+        if loaded != lock or not gate.verify_lock(loaded, expected_digest=trusted_digest):
             return 3
 
     output = {
         "receipt": receipt.as_dict(),
         "lock": lock.as_dict(),
+        "trusted_external_digest": trusted_digest,
         "verified": True,
     }
     print(json.dumps(output, indent=2, sort_keys=True))
