@@ -1,50 +1,32 @@
-# Model Version Pin Gate
+# Model Version Pin
 
-Independent GlacierEQ portfolio exhibit aligned to **Replicate** operating themes.
+Independent GlacierEQ implementation of immutable version binding for hosted model invocations.
 
 > **Not affiliated.** This repository is not affiliated with, endorsed by, employed by, or deployed at Replicate.
-> No proprietary access, production deployment, customer impact, or company partnership is claimed.
 
-## Bottleneck (GlacierEQ hypothesis)
+## Purpose
 
-Hosted model invocations drift versions without caller-visible pins.
+Make model invocation identity caller-visible and reproducible. Production requests cannot silently float from one model version to another.
 
-**Brick wall:** Silent success without receipts; affiliation or production claims without evidence.
+## Behavior
 
-**Observed public pressure (snapshot hypothesis):** Public market pressure toward AI-enabled products and operators (hypothesis only).
+- production requires an explicit 64-hex immutable version identifier
+- development/staging aliases are accepted only when an explicit local alias registry resolves them to an immutable version
+- optional model/version registries catch pins registered to the wrong model
+- parameter and input fingerprints become part of a deterministic invocation key
+- request expiry, parameter count, and work budget are enforced
+- unknown policy fields fail closed
+- every allowed receipt exposes the resolved immutable version
 
-## Innovation mechanism
+## Run
 
-**Model Version Pin Gate** — Require explicit model version pins; reject floating tags for production-class calls.
+```bash
+python -m pytest -q
+python scripts/operate.py
+```
 
-## Target roles
+Install with `python -m pip install .`; the JSON CLI is `model-version-pin`.
 
-- Applied AI Systems Engineer
-- Forward-Deployed Engineer
+## Boundary
 
-## Application move
-
-Lead with a small, inspectable Model Version Pin Gate exhibit and explicit non-affiliation boundary.
-
-## Current scaffold state
-
-This leaf is a **scaffold**: contracts, tests, and a stub mechanism exist so another engineer/AI can fill production-grade code without inventing company affiliation.
-
-| Surface | Path |
-|---------|------|
-| Mechanism stub | `src/model_version_pin_gate.py` |
-| Operate entry | `scripts/operate.py` |
-| Contract tests | `tests/` |
-| Target contract | `machine/target-contract.json` |
-| **AI fill-in brief** | **`DEV_UP_INSTRUCTIONS.md`** |
-| Issue contract | `ISSUE_CONTRACT.md` |
-
-## Non-claims
-
-- No Replicate employment, endorsement, proprietary data, or production use
-- No customer, revenue, latency, or scale claims without separate receipts
-- Scaffold tests define **intended behavior**, not verified production excellence
-
-## Next gate
-
-Implement mechanism + positive tests + operate receipt.
+This is a portable invocation-contract kernel. It does not call Replicate APIs or claim Replicate production access. A live adapter can populate alias/version registries from any hosted-model provider.

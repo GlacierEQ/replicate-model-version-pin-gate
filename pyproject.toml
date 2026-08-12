@@ -1,9 +1,20 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "replicate-model-version-pin-gate"
-version = "0.0.1"
-description = "Scaffold: Model Version Pin Gate (independent Replicate lens)"
+version = "1.0.0"
+description = "Immutable model-version pinning and reproducibility receipts for hosted inference"
 requires-python = ">=3.11"
 dependencies = []
+
+[project.scripts]
+model-version-pin = "model_version_pin_gate:cli"
+
+[tool.setuptools]
+py-modules = ["model_version_pin_gate"]
+package-dir = {"" = "src"}
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

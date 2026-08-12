@@ -11,5 +11,10 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
+      - run: python -m pip install --no-build-isolation .
       - run: python -m pytest -q
       - run: python scripts/operate.py
+      - name: installed CLI smoke
+        run: |
+          printf '%s' '{"subject_id":"ci","payload":{"model":"demo/model","version":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","environment":"PRODUCTION","parameters":{}},"budget":4}' | model-version-pin > /tmp/pin.json
+          python -c 'import json; d=json.load(open("/tmp/pin.json")); assert d["decision"] == "ALLOW"; assert d["result"]["immutable_pin"] is True'

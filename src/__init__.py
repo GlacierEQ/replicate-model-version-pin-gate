@@ -1,4 +1,6 @@
-"""Model Version Pin Gate — independent GlacierEQ scaffold."""
-from .model_version_pin_gate import ModelVersionPinGate
-
-__all__ = ["ModelVersionPinGate"]
+"""Reproducible model-version pinning runtime."""
+from .model_version_pin_gate import (
+    Decision, Environment, ModelVersionPinGate,
+    ModelVersionPinGateReceipt, ModelVersionPinGateRequest,
+)
+__all__ = ["Decision", "Environment", "ModelVersionPinGate", "ModelVersionPinGateReceipt", "ModelVersionPinGateRequest"]

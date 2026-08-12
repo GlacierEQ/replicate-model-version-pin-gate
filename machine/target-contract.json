@@ -1,22 +1,9 @@
 {
-  "schema": "glaciereq.repo-target-contract.v1",
-  "identity": {
-    "repository_id": "GlacierEQ/replicate-model-version-pin-gate",
-    "family": "elite-estate"
-  },
-  "current": {
-    "state": "PROMOTED",
-    "implemented": true,
-    "tested": true,
-    "deployed": false
-  },
-  "nonclaims": [
-    "no employer affiliation",
-    "no production deployment without receipt"
-  ],
-  "donor_plan": {
-    "mode": "none",
-    "donors": []
-  },
-  "frozen_at": "2026-08-10T10:11Z"
+  "schema":"glaciereq.repo-target-contract.v2",
+  "identity":{"repository_id":"GlacierEQ/replicate-model-version-pin-gate","canonical_role":"hosted-model-version-binding-kernel"},
+  "purpose":"Prevent production hosted-model calls from silently drifting model versions by requiring caller-visible immutable pins and deterministic invocation receipts.",
+  "current":{"state":"FUNCTIONAL","implemented":true,"tested":true,"runtime_demonstrated":true,"packaged":true,"deployment":"NOT_APPLICABLE_LIBRARY"},
+  "consumers":["Python inference clients","model-version-pin CLI","hosted-model adapters and agents"],
+  "nonclaims":["no Replicate affiliation","no proprietary Replicate access","no Replicate production deployment claimed"],
+  "remaining_material_gaps":[]
 }
